@@ -1,4 +1,5 @@
 #include<stdio.h>
+// döngü olmaksızın ekrana 1den 10 kadar sayı yazdırıyor 
 void say(void)
 {
 	int x,y;
